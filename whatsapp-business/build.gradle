@@ -1,0 +1,242 @@
+apply plugin: 'java-library'
+
+group 'app.krista.extensions.essentials.collaboration'
+
+def computedBaseName = "WhatsApp Business"
+def computedVersion = "local"
+def releasePropsFile = file('release.properties')
+
+if (releasePropsFile.exists()) {
+
+    def props = new Properties()
+    releasePropsFile.withInputStream { stream -> props.load(stream) }
+    // Remove whitespace for base name, but allow dashes/underscores
+    computedBaseName = (props['extension.name'] ?: "WhatsApp Business").replaceAll(/\s+/, "")
+    computedVersion = props['extension.version'] ?: "local"
+}
+version = computedVersion
+
+if (rootProject.file('builder.txt').canRead()) {
+    ext.builder = rootProject.file('builder.txt').text.trim()
+} else {
+    ext.builder = "0"
+}
+
+task updateVersion {
+    doFirst {
+        project.ext.newbuilder = Integer.parseInt(project.ext.builder) + 1
+        print "Building extension version: " + version.toString() + "-" + project.ext.newbuilder
+        rootProject.file('builder.txt').text = project.ext.newbuilder
+        System.clearProperty("extensionVersion")
+        System.setProperty("extensionVersion", version.toString() + "-" + project.ext.newbuilder)
+    }
+}
+
+compileJava.dependsOn clean
+compileJava.dependsOn updateVersion
+
+System.setProperty("extensionVersion", version.toString())
+
+ sourceCompatibility = '21'
+ targetCompatibility = '21'
+
+repositories {
+    mavenLocal()
+    maven {
+        url "https://packages.cicd.in.antbrains.com/artifactory/libs-release"
+    }
+    mavenCentral()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs << '-Xlint:all,-serial'
+}
+
+tasks.register('compile') {
+    dependsOn compileJava
+}
+
+configurations {
+    implementation {
+        canBeConsumed = false
+        canBeResolved = true
+    }
+}
+
+dependencies {
+    annotationProcessor 'app.krista:extension-impl-anno-processors:1.0.118'
+    implementation 'app.krista:krista-apis:1.0.118'
+    implementation 'org.glassfish.hk2:hk2-api:3.0.3'
+    implementation "org.aspectj:aspectjrt:1.9.21.2"
+
+    implementation 'com.kristasoft.common:common-test:1.0.45'
+}
+
+tasks.register('createSourceDir', Exec) {
+    dependsOn processResources
+    commandLine "mkdir", "-p", "$projectDir/build/classes/java/main/META-INF/project"
+}
+
+tasks.register('copyGradleFile', Exec) {
+    dependsOn createSourceDir
+    commandLine "cp", "$projectDir/build.gradle", "$projectDir/build/classes/java/main/META-INF/project/build.gradle"
+}
+
+tasks.register('includeSources', Exec) {
+    dependsOn copyGradleFile
+    commandLine "cp", "-r", "$projectDir/src", "$projectDir/build/classes/java/main/META-INF/project/src"
+}
+
+tasks.register('candidate', Exec) {
+    commandLine "env",
+            "DOCKER_UPLOAD_REPO=" + rootProject.properties['DOCKER_UPLOAD_REPO'],
+            "MAVEN_URL=" + System.properties['MAVEN_URL'],
+            "MAVEN_UPLOAD_URL=" + rootProject.properties['MAVEN_UPLOAD_URL'],
+            "MAVEN_USERNAME=" + rootProject.properties['MAVEN_USERNAME'],
+            "MAVEN_PASSWORD=" + rootProject.properties['MAVEN_PASSWORD'],
+            "bash", "candidate.sh"
+
+    standardOutput = new ByteArrayOutputStream()
+    ext.output = {
+        return standardOutput.toString()
+    }
+}
+
+tasks.register('release', Exec) {
+    commandLine "env",
+            "DOCKER_UPLOAD_REPO=" + rootProject.properties['DOCKER_UPLOAD_REPO'],
+            "MAVEN_URL=" + System.properties['MAVEN_URL'],
+            "MAVEN_UPLOAD_URL=" + rootProject.properties['MAVEN_UPLOAD_URL'],
+            "MAVEN_USERNAME=" + rootProject.properties['MAVEN_USERNAME'],
+            "MAVEN_PASSWORD=" + rootProject.properties['MAVEN_PASSWORD'],
+            "bash", "release.sh"
+    standardOutput = new ByteArrayOutputStream()
+    ext.output = {
+        return standardOutput.toString()
+    }
+}
+import java.util.regex.Pattern
+/*
+    Task to generate release.properties files in below format.
+    extension.version=<version>
+    extension.name=<name>
+    domain.name=<domain>
+    ecosystem.name=<ecosystem>
+    Every extension developer should update extensionFile and areaFileName with relative path.
+*/
+abstract class GenerateReleasePropertiesTask extends DefaultTask {
+    @TaskAction
+    def generateProperties() {
+        def extensionFilePath = 'src/main/java/app/krista/extension/essentials/collaboration/waba/WhatsAppBusinessExtension.java'
+        def areaFilePaths = [
+                'src/main/java/app/krista/extension/essentials/collaboration/waba/catalog/MediumArea.java'
+        ]
+        def extensionFile = project.file(extensionFilePath)
+        if (!extensionFile.exists()) {
+            throw new GradleException("Extension file not found: ${extensionFilePath}")
+        }
+
+        def properties = new Properties()
+        // Pre-compile the regex pattern for better performance
+        def keyValuePattern = Pattern.compile(/(\w+)\s*=\s*"([^"]+)"/)
+
+        // Extract Extension annotation information
+        extractAnnotationInfo(extensionFile, "@Extension", keyValuePattern) { key, value ->
+            if (key == "name") {
+                properties.setProperty("extension.name", value)
+                logger.lifecycle("Found extension name: ${value}")
+            } else if (key == "version") {
+                properties.setProperty("extension.version", value)
+                logger.lifecycle("Found extension version: ${value}")
+            }
+        }
+        // If no extension name found, use default
+        if (!properties.getProperty('extension.name')) {
+            properties.setProperty("extension.name", "WhatsApp Business")
+            logger.lifecycle("Using default extension name: WhatsApp Business")
+        }
+
+        // Extract Domain annotation information from area files
+        def domainFound = false
+        for (String areaFilePath : areaFilePaths) {
+            def areaFile = project.file(areaFilePath)
+            if (areaFile.exists()) {
+                logger.lifecycle("Processing area file: ${areaFilePath}")
+                extractAnnotationInfo(areaFile, "@Domain", keyValuePattern) { key, value ->
+                    if (key == "name" && !properties.getProperty('domain.name')) {
+                        properties.setProperty("domain.name", value)
+                        logger.lifecycle("Found domain name: ${value}")
+                        domainFound = true
+                    } else if (key == "ecosystemName" && !properties.getProperty('ecosystem.name')) {
+                        properties.setProperty("ecosystem.name", value)
+                        logger.lifecycle("Found ecosystem name: ${value}")
+                    }
+                }
+                // Break if we found both domain properties
+                if (properties.getProperty('domain.name') && properties.getProperty('ecosystem.name')) {
+                    break
+                }
+            } else {
+                logger.lifecycle("Area file not found: ${areaFilePath}")
+            }
+        }
+
+        if (!properties.getProperty('extension.version')) {
+            throw new GradleException("Could not find extension version in ${extensionFilePath}")
+        }
+        if (!properties.getProperty('domain.name') || !properties.getProperty('ecosystem.name')) {
+            throw new GradleException("Could not find domain name or ecosystem name in any of the area files: ${areaFilePaths}")
+        }
+        def releasePropertiesFile = project.file('release.properties')
+        def content = properties.collect { key, value -> "${key}=${value}" }.join('\n')
+        releasePropertiesFile.text = content + '\n'
+        logger.lifecycle("Generated release.properties with content:\n${content}")
+    }
+    /**
+     * Extracts annotation information from a file
+     * @param file The file to extract from
+     * @param annotationName The annotation name to look for
+     * @param keyValuePattern The regex pattern to extract key-value pairs
+     * @param processProperty Closure to process each property
+     */
+    private static void extractAnnotationInfo(File file, String annotationName, Pattern keyValuePattern, Closure processProperty) {
+        StringBuilder annotationText = new StringBuilder()
+        boolean inAnnotation = false
+        file.eachLine { line ->
+            line = line.trim()
+            if (line.contains(annotationName)) {
+                inAnnotation = true
+            }
+            if (inAnnotation) {
+                annotationText.append(line)
+                if (line.contains(")")) {
+                    inAnnotation = false
+                    def matcher = keyValuePattern.matcher(annotationText.toString())
+                    while (matcher.find()) {
+                        def key = matcher.group(1)
+                        def value = matcher.group(2)
+                        processProperty.call(key, value)
+                    }
+                }
+            }
+        }
+    }
+}
+tasks.register('generateReleaseProperties', GenerateReleasePropertiesTask) {
+    group = 'build'
+    description = 'Generates release.properties file with extension version and domain information'
+}
+jar {
+    // Without this dependency, the jar task may use the fallback "local" value if the file is not available during configuration.
+    dependsOn tasks.named("generateReleaseProperties")
+    archiveBaseName.set(computedBaseName)
+    manifest {}
+    from {
+        configurations.implementation.collect {
+            it.isDirectory() ? it : zipTree(it)
+        }
+    }
+    exclude 'META-INF/*.RSA', 'META-INF/*.SF', 'META-INF/*.DSA'
+    duplicatesStrategy = "exclude"
+}

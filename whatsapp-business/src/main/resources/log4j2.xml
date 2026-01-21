@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="error">
+    <Appenders>
+        <Console name="Console" target="SYSTEM_OUT" >
+            <PatternLayout pattern="%5p | %t | %c{1} | %m{nolookups} %n"/>
+        </Console>
+        <Console name="Perf" target="SYSTEM_OUT" >
+            <PatternLayout pattern="PERF  | %t | %m{nolookups} %n"/>
+        </Console>
+    </Appenders>
+    <Loggers>
+        <Root level="WARN">
+            <AppenderRef ref="Console"/>
+        </Root>
+    </Loggers>
+</Configuration>
