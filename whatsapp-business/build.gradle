@@ -1,4 +1,44 @@
-apply plugin: 'java-library'
+plugins {
+    id 'java-library'
+    id "jacoco"
+    id("org.sonarqube") version "6.3.1.5724"
+}
+
+sonar {
+    properties {
+        property('sonar.projectName', 'SonarScanner for Krista Global Catalog (whatsapp-business with Jacoco code coverage)')
+        property("sonar.projectKey", "sonar-scanner-whatsapp-business")
+        property("sonar.sources", "src/main/java")
+        property("sonar.tests", "src/test/java")
+        property("sonar.java.binaries", "build/classes/java/main")
+        property("sonar.java.test.binaries", "build/classes/java/test")
+        property("sonar.coverage.jacoco.xmlReportPaths", "build/reports/jacoco/test/jacocoTestReport.xml")
+        property("sonar.junit.reportPaths", "build/test-results/test")
+    }
+}
+
+tasks.test {
+    // Generate coverage report after tests run
+    finalizedBy(tasks.jacocoTestReport)
+}
+
+jacoco {
+    toolVersion = "0.8.11"
+}
+
+tasks.jacocoTestReport {
+    dependsOn(tasks.test)
+    reports {
+        xml.required = true // Required for SonarQube
+        html.required = true // Useful for local viewing
+        csv.required = false
+    }
+}
+
+// Ensure Sonar runs only after JaCoCo report generation
+tasks.named("sonar") {
+    dependsOn(tasks.jacocoTestReport)
+}
 
 group 'app.krista.extensions.essentials.collaboration'
 

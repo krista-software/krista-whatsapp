@@ -15,7 +15,7 @@
 **Dependencies**:
 - **Release Calendar Month**: December 2025
 - **Krista Service APIs Java**: 1.0.118
-- **Global Catalog Version**: GC-2025.12.2
+- **Global Catalog Version**: GC-2026.02.02
 - **Java Version**: 21
 - **Gradle Version**: 8.10
 
